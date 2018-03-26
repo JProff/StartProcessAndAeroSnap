@@ -17,6 +17,7 @@
     .PARAMETER SnapPosition
 		[Optional] Specifies snap position:
 			Empty string or without this parameter - if you just want to move without snap
+			F - snap to Full Screen
 			L - snap to Left
 			LT - snap to Left Top
 			LB - snap to Left Bottom
@@ -35,6 +36,18 @@
  
     .PARAMETER PosY
         [Optional] Specifies the window's PosY position.
+ 
+	.PARAMETER InitialPosX
+        [Optional] Helpful if you need snap window to another monitor. Uses with SnapPosition parameter
+ 
+    .PARAMETER InitialPosY
+        [Optional] Uses with SnapPosition parameter
+ 
+    .PARAMETER InitialWidth
+        [Optional] Uses with SnapPosition parameter
+ 
+    .PARAMETER InitialHeight
+        [Optional] Uses with SnapPosition parameter
  
     .PARAMETER StartProcessParameters
         [Optional] Any excess parameters will be passed to Start-Process
@@ -84,6 +97,18 @@ function global:StartProcessAndAeroSnap()
         [Parameter(Mandatory = $false)]
         [int] $PosY = -1,
  
+        [Parameter(Mandatory = $false)]
+        [int] $InitialWidth = 300,
+         
+        [Parameter(Mandatory = $false)]
+        [int] $InitialHeight = 300,
+ 
+        [Parameter(Mandatory = $false)]
+        [int] $InitialPosX = 0,
+ 
+        [Parameter(Mandatory = $false)]
+        [int] $InitialPosY = 0,
+ 
         [Parameter(Mandatory = $false, ValueFromRemainingArguments=$true)]
         $StartProcessParameters
     )
@@ -120,247 +145,257 @@ function global:StartProcessAndAeroSnap()
     if($mainWindowHandle -ne [System.IntPtr]::Zero)
     {
         $CSharpSource = @" 
-            using System; 
-            using System.Runtime.InteropServices;
-			using System.Threading;
- 
-            namespace JProff.Tools.InlinePS
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+namespace JProff.Tools.InlinePS
+{
+    public static class MyMoveWindowWithAeroSnap
+    {
+        private const ushort DOWN = 0x28;
+        private const ushort ESCAPE = 0x1B;
+        private const ushort LEFT = 0x25;
+        private const ushort LWIN = 0x5B;
+        private const ushort RIGHT = 0x27;
+        private const int SWP_NOSIZE = 0x01, SWP_NOMOVE = 0x02, SWP_SHOWWINDOW = 0x40, SWP_HIDEWINDOW = 0x80;
+        private const ushort UP = 0x26;
+
+        /// <summary>
+        ///     Delay between SendInput commands
+        /// </summary>
+        private static readonly TimeSpan Delay = TimeSpan.FromMilliseconds(100);
+
+        /// <summary>
+        ///     Move window or snap with Aero Snap
+        /// </summary>
+        /// <param name="hWnd">Window handle</param>
+        /// <param name="snapPosition">
+        ///     Empty string - if you just want to move without snap
+        ///     F - snap to Full Screen
+        ///     L - snap to Left
+        ///     LT - snap to Left Top
+        ///     LB - snap to Left Bottom
+        ///     R - snap to Right
+        ///     RT - snap to Right Top
+        ///     RB - snap to Right Bottom
+        /// </param>
+        /// <param name="width">If null uses default width</param>
+        /// <param name="height">If null uses default height</param>
+        /// <param name="posX">Uses only if <paramref name="snapPosition" /> - empty string</param>
+        /// <param name="posY">Uses only if <paramref name="snapPosition" /> - empty string</param>
+        /// <param name="initialX">Helpful if you need snap window to another monitor. Uses with <paramref name="snapPosition" /></param>
+        /// <param name="initialY">Uses with <paramref name="snapPosition" /></param>
+        /// <param name="initialWidth">Uses with <paramref name="snapPosition" /></param>
+        /// <param name="initialHeight">Uses with <paramref name="snapPosition" /></param>
+        public static void MoveWindow(IntPtr hWnd, string snapPosition, int width = -1, int height = -1,
+            int posX = -1, int posY = -1, int initialX = 0, int initialY = 0, int initialWidth = 300,
+            int initialHeight = 300)
+        {
+            if (string.IsNullOrWhiteSpace(snapPosition))
             {
-				public static class MyMoveWindowWithAeroSnap
-				{
-					private const ushort DOWN = 0x28;
-					private const ushort ESCAPE = 0x1B;
-					private const ushort LEFT = 0x25;
-					private const ushort LWIN = 0x5B;
-					private const ushort RIGHT = 0x27;
-					private const int SWP_NOSIZE = 0x01, SWP_NOMOVE = 0x02, SWP_SHOWWINDOW = 0x40, SWP_HIDEWINDOW = 0x80;
-					private const ushort UP = 0x26;
+                SetPosition(hWnd, posX, posY, width, height);
+                return;
+            }
 
-					/// <summary>
-					///     Delay between SendInput commands
-					/// </summary>
-					private static readonly TimeSpan Delay = TimeSpan.FromMilliseconds(100);
+            var sp = snapPosition.Trim().ToUpper();
 
-					/// <summary>
-					///     Move window or snap with Aero Snap
-					/// </summary>
-					/// <param name="hWnd">Window handle</param>
-					/// <param name="snapPosition">
-					///     Empty string - if you just want to move without snap
-					///     L - snap to Left
-					///     LT - snap to Left Top
-					///     LB - snap to Left Bottom
-					///     R - snap to Right
-					///     RT - snap to Right Top
-					///     RB - snap to Right Bottom
-					/// </param>
-					/// <param name="width">If null uses default width</param>
-					/// <param name="height">If null uses default height</param>
-					/// <param name="posX">Uses only if <paramref name="snapPosition" /> - empty string</param>
-					/// <param name="posY">Uses only if <paramref name="snapPosition" /> - empty string</param>
-					public static void MoveWindow(IntPtr hWnd, string snapPosition, int width = -1, int height = -1,
-						int posX = -1, int posY = -1)
-					{
-						if (string.IsNullOrWhiteSpace(snapPosition))
-						{
-							SetPosition(hWnd, posX, posY, width, height);
-							return;
-						}
+            SetPosition(hWnd, initialX, initialY, initialWidth, initialHeight);
 
-						var sp = snapPosition.Trim().ToUpper();
+            SetForegroundWindow(hWnd);
 
-						SetForegroundWindow(hWnd);
+            var firstParam = sp[0];
+            if (firstParam == 'L')
+                Snap(LEFT);
+            else if (firstParam == 'R')
+                Snap(RIGHT);
+            else if (firstParam == 'F')
+                Snap(UP);
 
-						var firstParam = sp[0];
-						if (firstParam == 'L')
-							Snap(LEFT);
-						else if (firstParam == 'R')
-							Snap(RIGHT);
+            if (snapPosition.Length == 2)
+            {
+                var secondParam = sp[1];
+                if (secondParam == 'T')
+                    Snap(UP);
+                else if (secondParam == 'B')
+                    Snap(DOWN);
+            }
 
-						if (snapPosition.Length == 2)
-						{
-							var secondParam = sp[1];
-							if (secondParam == 'T')
-								Snap(UP);
-							else if (secondParam == 'B')
-								Snap(DOWN);
-						}
+            SetSize(hWnd, width, height);
+        }
 
-						SetSize(hWnd, width, height);
-					}
+        private static INPUT GetDown(ushort keyCode)
+        {
+            return new INPUT
+            {
+                Type = 1,
+                Data =
+                {
+                    Keyboard =
+                        new KEYBDINPUT
+                        {
+                            KeyCode = keyCode,
+                            Scan = 0,
+                            Flags = 0,
+                            Time = 0,
+                            ExtraInfo = IntPtr.Zero
+                        }
+                }
+            };
+        }
 
-					private static INPUT GetDown(ushort keyCode)
-					{
-						return new INPUT
-						{
-							Type = 1,
-							Data =
-							{
-								Keyboard =
-									new KEYBDINPUT
-									{
-										KeyCode = keyCode,
-										Scan = 0,
-										Flags = 0,
-										Time = 0,
-										ExtraInfo = IntPtr.Zero
-									}
-							}
-						};
-					}
+        private static INPUT[] GetEscapeInputs()
+        {
+            return new[]
+            {
+                GetDown(ESCAPE),
+                GetUp(ESCAPE)
+            };
+        }
 
-					private static INPUT[] GetEscapeInputs()
-					{
-						return new[]
-						{
-							GetDown(ESCAPE),
-							GetUp(ESCAPE)
-						};
-					}
+        private static INPUT[] GetSnapInputs(ushort arrow)
+        {
+            return new[]
+            {
+                GetDown(LWIN),
+                GetDown(arrow),
+                GetUp(arrow),
+                GetUp(LWIN)
+            };
+        }
 
-					private static INPUT[] GetSnapInputs(ushort arrow)
-					{
-						return new[]
-						{
-							GetDown(LWIN),
-							GetDown(arrow),
-							GetUp(arrow),
-							GetUp(LWIN)
-						};
-					}
+        private static INPUT GetUp(ushort keyCode)
+        {
+            return new INPUT
+            {
+                Type = 1,
+                Data =
+                {
+                    Keyboard =
+                        new KEYBDINPUT
+                        {
+                            KeyCode = keyCode,
+                            Scan = 0,
+                            Flags = 0x002,
+                            Time = 0,
+                            ExtraInfo = IntPtr.Zero
+                        }
+                }
+            };
+        }
 
-					private static INPUT GetUp(ushort keyCode)
-					{
-						return new INPUT
-						{
-							Type = 1,
-							Data =
-							{
-								Keyboard =
-									new KEYBDINPUT
-									{
-										KeyCode = keyCode,
-										Scan = 0,
-										Flags = 0x002,
-										Time = 0,
-										ExtraInfo = IntPtr.Zero
-									}
-							}
-						};
-					}
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hwnd, ref Rect rectangle);
 
-					[DllImport("user32.dll")]
-					private static extern bool GetWindowRect(IntPtr hwnd, ref Rect rectangle);
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint SendInput(uint numberOfInputs, INPUT[] inputs, int sizeOfInputStructure);
 
-					[DllImport("user32.dll", SetLastError = true)]
-					private static extern uint SendInput(uint numberOfInputs, INPUT[] inputs, int sizeOfInputStructure);
+        private static void SendInputs(INPUT[] inputs)
+        {
+            SendInput((uint) inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+        }
 
-					private static void SendInputs(INPUT[] inputs)
-					{
-						SendInput((uint) inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
-					}
+        [DllImport("User32.dll")]
+        private static extern int SetForegroundWindow(IntPtr hWnd);
 
-					[DllImport("User32.dll")]
-					private static extern int SetForegroundWindow(IntPtr hWnd);
+        static void SetPosition(IntPtr handle, int x, int y, int width, int height)
+        {
+            x = x < 0 ? 0 : x;
+            y = y < 0 ? 0 : y;
+            SetWindowPos(handle, 0, x, y, 0, 0, SWP_NOSIZE | SWP_HIDEWINDOW);
 
-					static void SetPosition(IntPtr handle, int x, int y, int width, int height)
-					{
-						x = x < 0 ? 0 : x;
-						y = y < 0 ? 0 : y;
-						SetWindowPos(handle, 0, x, y, 0, 0, SWP_NOSIZE | SWP_HIDEWINDOW);
+            if (width > 0 && height > 0)
+                SetWindowPos(handle, 0, 0, 0, width, height, SWP_NOMOVE);
 
-						if (width > 0 && height > 0)
-							SetWindowPos(handle, 0, 0, 0, width, height, SWP_NOMOVE);
+            SetWindowPos(handle, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW);
+        }
 
-						SetWindowPos(handle, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW);
-					}
+        private static void SetSize(IntPtr handle, int width, int height)
+        {
+            if (width < 0 && height < 0) return;
 
-					private static void SetSize(IntPtr handle, int width, int height)
-					{
-						if (width < 0 && height < 0) return;
+            if (width < 0 || height < 0)
+            {
+                var rect = new Rect();
+                GetWindowRect(handle, ref rect);
+                height = height < 0 ? rect.Bottom - rect.Top : height;
+                width = width < 0 ? rect.Right - rect.Left : width;
+            }
 
-						if (width < 0 || height < 0)
-						{
-							var rect = new Rect();
-							GetWindowRect(handle, ref rect);
-							height = height < 0 ? rect.Bottom - rect.Top : height;
-							width = width < 0 ? rect.Right - rect.Left : width;
-						}
+            SetWindowPos(handle, 0, 0, 0, width, height, SWP_NOMOVE);
+            SetWindowPos(handle, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW);
+        }
 
-						SetWindowPos(handle, 0, 0, 0, width, height, SWP_NOMOVE);
-						SetWindowPos(handle, 0, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW);
-					}
+        [DllImport("user32.dll", EntryPoint = "SetWindowPos")]
+        private static extern IntPtr SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int X, int Y, int cx, int cy,
+            int uFlags);
 
-					[DllImport("user32.dll", EntryPoint = "SetWindowPos")]
-					private static extern IntPtr SetWindowPos(IntPtr hWnd, int hWndInsertAfter, int X, int Y, int cx, int cy,
-						int uFlags);
+        private static void Snap(ushort arrow)
+        {
+            Thread.Sleep(Delay);
+            SendInputs(GetSnapInputs(arrow));
+            Thread.Sleep(Delay);
+            SendInputs(GetEscapeInputs());
+            Thread.Sleep(Delay);
+        }
 
-					private static void Snap(ushort arrow)
-					{
-						Thread.Sleep(Delay);
-						SendInputs(GetSnapInputs(arrow));
-						Thread.Sleep(Delay);
-						SendInputs(GetEscapeInputs());
-						Thread.Sleep(Delay);
-					}
-
-					private struct Rect
-					{
-						public int Left { get; set; }
-						public int Top { get; set; }
-						public int Right { get; set; }
-						public int Bottom { get; set; }
-					}
+        private struct Rect
+        {
+            public int Left { get; set; }
+            public int Top { get; set; }
+            public int Right { get; set; }
+            public int Bottom { get; set; }
+        }
 
 #pragma warning disable 649
-					private struct INPUT
-					{
-						public uint Type;
-						public MOUSEKEYBDHARDWAREINPUT Data;
-					}
+        private struct INPUT
+        {
+            public uint Type;
+            public MOUSEKEYBDHARDWAREINPUT Data;
+        }
 
-					[StructLayout(LayoutKind.Explicit)]
-					private struct MOUSEKEYBDHARDWAREINPUT
-					{
-						[FieldOffset(0)]
-						public MOUSEINPUT Mouse;
-						[FieldOffset(0)]
-						public KEYBDINPUT Keyboard;
-						[FieldOffset(0)]
-						public HARDWAREINPUT Hardware;
-					}
+        [StructLayout(LayoutKind.Explicit)]
+        private struct MOUSEKEYBDHARDWAREINPUT
+        {
+            [FieldOffset(0)]
+            public MOUSEINPUT Mouse;
+            [FieldOffset(0)]
+            public KEYBDINPUT Keyboard;
+            [FieldOffset(0)]
+            public HARDWAREINPUT Hardware;
+        }
 
-					private struct KEYBDINPUT
-					{
-						public ushort KeyCode;
-						public ushort Scan;
-						public uint Flags;
-						public uint Time;
-						public IntPtr ExtraInfo;
-					}
+        private struct KEYBDINPUT
+        {
+            public ushort KeyCode;
+            public ushort Scan;
+            public uint Flags;
+            public uint Time;
+            public IntPtr ExtraInfo;
+        }
 
-					private struct MOUSEINPUT
-					{
-						public int X;
-						public int Y;
-						public uint MouseData;
-						public uint Flags;
-						public uint Time;
-						public IntPtr ExtraInfo;
-					}
-					private struct HARDWAREINPUT
-					{
-						public uint Msg;
-						public ushort ParamL;
-						public ushort ParamH;
-					}
+        private struct MOUSEINPUT
+        {
+            public int X;
+            public int Y;
+            public uint MouseData;
+            public uint Flags;
+            public uint Time;
+            public IntPtr ExtraInfo;
+        }
+        private struct HARDWAREINPUT
+        {
+            public uint Msg;
+            public ushort ParamL;
+            public ushort ParamH;
+        }
 #pragma warning restore 649
-				}
-            }
+    }
+}
 "@ 
  
         Add-Type -TypeDefinition $CSharpSource -Language CSharp -ErrorAction SilentlyContinue
-        [JProff.Tools.InlinePS.MyMoveWindowWithAeroSnap]::MoveWindow($mainWindowHandle, $SnapPosition, $Width, $Height, $PosX, $PosY);
+        [JProff.Tools.InlinePS.MyMoveWindowWithAeroSnap]::MoveWindow($mainWindowHandle, $SnapPosition, $Width, $Height, $PosX, $PosY, $InitialPosX, $InitialPosY, $InitialWidth, $InitialHeight);
     }
     else
     {
